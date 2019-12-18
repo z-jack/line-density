@@ -40,20 +40,31 @@ export interface Result {
  * @param binY Configuration for the binning along the value dimension.
  * @param canvas The canvas for the webgl context and for debug output.
  */
-export default async function(
+export default async function (
   data: ndarray,
   binX: BinConfig,
   binY: BinConfig,
-  canvas?: HTMLCanvasElement
+  canvas?: HTMLCanvasElement,
+  gaussianKernel?: number[][]
 ) {
   const [numSeries, numDataPoints] = data.shape;
 
   const debugCanvas = !!canvas;
+  const doGaussian = !!gaussianKernel;
 
   const heatmapWidth = Math.floor((binX.stop - binX.start) / binX.step);
   const heatmapHeight = Math.floor((binY.stop - binY.start) / binY.step);
 
+  if (doGaussian && gaussianKernel.find(gaussianRow => gaussianRow.length != gaussianKernel.length)) {
+    throw new Error('The input Gaussian kernal should be square matrix.')
+  }
+  if (doGaussian && gaussianKernel.length % 2 == 0) {
+    throw new Error('The input Gaussian kernal size should be odd.')
+  }
+  const gaussianIndexOffset = doGaussian && Math.round((gaussianKernel.length - 1) / 2)
+
   console.info(`Heatmap size: ${heatmapWidth}x${heatmapHeight}`);
+  doGaussian && console.info(`GaussianKernelSize: ${gaussianKernel.length}x${gaussianKernel.length}`)
 
   const regl = regl_({
     canvas: canvas || document.createElement("canvas"),
@@ -124,6 +135,8 @@ export default async function(
 
     frag: `
         precision mediump float;
+
+        varying vec4 uv;
       
         void main() {
           // we will control the color with the color mask
@@ -174,6 +187,55 @@ export default async function(
 
     count: 3
   };
+
+  /**
+   * Do Gaussian kernel density estimation
+   */
+  const gaussian = regl({
+    ...computeBase,
+    frag: `
+      precision mediump float;
+
+      uniform sampler2D buffer;
+
+      varying vec2 uv;
+
+      vec4 getColor(int offsetX, int offsetY) {
+        const int canvasWidth = ${reshapedWidth};
+        const int canvasHeight = ${reshapedHeight};
+        const int sampleWidth = ${heatmapWidth};
+        const int sampleHeight = ${heatmapHeight};
+
+        int currentX = int(uv.x * float(canvasWidth));
+        int currentY = int(uv.y * float(canvasHeight));
+
+        if (currentX / sampleWidth == (currentX + offsetX) / sampleWidth && currentY / sampleHeight == (currentY + offsetY) / sampleHeight) {
+          vec2 onePixel = vec2(1.0, 1.0) / vec2(float(canvasWidth), float(canvasHeight));
+          return texture2D(buffer, uv + onePixel * vec2(float(offsetX), float(offsetY)));
+        } else {
+          return vec4(0, 0, 0, 0);
+        }
+      }
+
+      void main() {
+        gl_FragColor = ${
+      doGaussian ?
+        gaussianKernel.map(
+          (gaussianRow, offsetX) =>
+            gaussianRow.map(
+              (kernelValue, offsetY) =>
+                `getColor(${gaussianIndexOffset - offsetX}, ${gaussianIndexOffset - offsetY}) * ${f(kernelValue)}`)
+              .join('+'))
+          .join('+')
+        : 'getColor(0,0)'
+      };
+      }
+    `,
+    uniforms: {
+      buffer: regl.prop<any, "buffer">("buffer")
+    },
+    framebuffer: regl.prop<any, "out">("out")
+  })
 
   /**
    * Compute the sums of each column and put it into a framebuffer
@@ -349,6 +411,13 @@ export default async function(
     colorType: "uint8"
   });
 
+  const gaussianBuffer = regl.framebuffer({
+    width: reshapedWidth,
+    height: reshapedHeight,
+    colorFormat: "rgba",
+    colorType: "uint8"
+  })
+
   const sumsBuffer = regl.framebuffer({
     width: reshapedWidth,
     height: repeatsY,
@@ -440,18 +509,35 @@ export default async function(
     drawLine(lines);
     console.timeEnd("regl: drawLine");
 
+    if (doGaussian) {
+      console.time("regl: gaussian");
+      gaussian({
+        buffer: linesBuffer,
+        out: gaussianBuffer
+      })
+      console.timeEnd('regl: gaussian')
+    }
+
+    // if (debugCanvas) {
+    //   drawTexture({
+    //     buffer: gaussianBuffer,
+    //     colorMask: [true, true, true, true]
+    //   });
+    // }
+
     finishedSeries += lines.length;
 
+    let pendingBuffer = doGaussian ? gaussianBuffer : linesBuffer
     console.time("regl: sum");
     sum({
-      buffer: linesBuffer,
+      buffer: pendingBuffer,
       out: sumsBuffer
     });
     console.timeEnd("regl: sum");
 
     console.time("regl: normalize");
     normalize({
-      buffer: linesBuffer,
+      buffer: pendingBuffer,
       sums: sumsBuffer,
       out: resultBuffer
     });

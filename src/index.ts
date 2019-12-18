@@ -206,8 +206,8 @@ export default async function (
         const int sampleWidth = ${heatmapWidth};
         const int sampleHeight = ${heatmapHeight};
 
-        int currentX = int(uv.x * float(canvasWidth));
-        int currentY = int(uv.y * float(canvasHeight));
+        int currentX = int(uv.x * float(canvasWidth) + 1e-5);
+        int currentY = int(uv.y * float(canvasHeight) + 1e-5);
 
         if (currentX / sampleWidth == (currentX + offsetX) / sampleWidth && currentY / sampleHeight == (currentY + offsetY) / sampleHeight) {
           vec2 onePixel = vec2(1.0, 1.0) / vec2(float(canvasWidth), float(canvasHeight));

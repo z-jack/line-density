@@ -195,38 +195,40 @@ export default async function (
     ...computeBase,
     frag: `
       precision mediump float;
-
+    
       uniform sampler2D buffer;
-
+    
       varying vec2 uv;
-
+    
       vec4 getColor(int offsetX, int offsetY) {
         const int canvasWidth = ${reshapedWidth};
         const int canvasHeight = ${reshapedHeight};
         const int sampleWidth = ${heatmapWidth};
         const int sampleHeight = ${heatmapHeight};
-
-        int currentX = int(uv.x * float(canvasWidth) + 1e-5);
-        int currentY = int(uv.y * float(canvasHeight) + 1e-5);
-
-        if (currentX / sampleWidth == (currentX + offsetX) / sampleWidth && currentY / sampleHeight == (currentY + offsetY) / sampleHeight) {
-          vec2 onePixel = vec2(1.0, 1.0) / vec2(float(canvasWidth), float(canvasHeight));
-          return texture2D(buffer, uv + onePixel * vec2(float(offsetX), float(offsetY)));
+    
+        int currentX = int(uv.x * float(canvasWidth) + 1e-1);
+        int currentY = int(uv.y * float(canvasHeight) + 1e-1);
+        int refX = currentX + offsetX;
+        int refY = currentY + offsetY;
+    
+        if (currentX / sampleWidth == refX / sampleWidth && currentY / sampleHeight == refY / sampleHeight && refX >= 0 && refY >= 0) {
+          vec2 offsetPixel = vec2(float(offsetX), float(offsetY)) / vec2(float(canvasWidth), float(canvasHeight));
+          return texture2D(buffer, uv + offsetPixel);
         } else {
-          return vec4(0, 0, 0, 0);
+          return vec4(0.0, 0.0, 0.0, 0.0);
         }
       }
-
+    
       void main() {
         gl_FragColor = ${
       doGaussian ?
         gaussianKernel.map(
-          (gaussianRow, offsetX) =>
+          (gaussianRow, offsetY) =>
             gaussianRow.map(
-              (kernelValue, offsetY) =>
-                `getColor(${gaussianIndexOffset - offsetX}, ${gaussianIndexOffset - offsetY}) * ${f(kernelValue)}`)
-              .join('+'))
-          .join('+')
+              (kernelValue, offsetX) =>
+                `getColor(${gaussianIndexOffset - offsetX}, ${offsetY - gaussianIndexOffset}) * ${f(kernelValue)}`)
+              .join(' + '))
+          .join(' + ')
         : 'getColor(0,0)'
       };
       }
@@ -261,7 +263,7 @@ export default async function (
           }
       
           // sum should be at least 1, prevents problems with empty buffers
-          gl_FragColor = max(vec4(1), sum);
+          gl_FragColor = max(vec4(1.0), sum);
         }`,
 
     uniforms: {
@@ -415,7 +417,7 @@ export default async function (
     width: reshapedWidth,
     height: reshapedHeight,
     colorFormat: "rgba",
-    colorType: "uint8"
+    colorType: "float"
   })
 
   const sumsBuffer = regl.framebuffer({
@@ -517,13 +519,6 @@ export default async function (
       })
       console.timeEnd('regl: gaussian')
     }
-
-    // if (debugCanvas) {
-    //   drawTexture({
-    //     buffer: gaussianBuffer,
-    //     colorMask: [true, true, true, true]
-    //   });
-    // }
 
     finishedSeries += lines.length;
 

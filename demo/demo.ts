@@ -67,7 +67,7 @@ function run() {
   const binConfigY = bin({ maxbins: binsy, extent: [0, maxY] });
 
   start = Date.now();
-  compute(data, binConfigX, binConfigY, canvas, [[1, 2, 1], [2, 40, 2], [1, 2, 1]]).then(heatmapData => {
+  compute(data, binConfigX, binConfigY, canvas, [[1, 3, 1], [3, 9, 3], [1, 3, 1]]).then(heatmapData => {
     document.getElementById("computetime").innerText = `${(Date.now() - start) /
       1000} seconds`;
     heatmap(heatmapData, binConfigX, binConfigY);

@@ -1,7 +1,7 @@
 import ndarray from "ndarray";
 import regl_ from "regl";
 import { MAX_REPEATS_X, MAX_REPEATS_Y } from "./constants";
-import { float as f, range } from "./utils";
+import { float as f, rangeDup, duplicate } from "./utils";
 
 export interface BinConfig {
   /**
@@ -45,7 +45,10 @@ export default async function (
   binX: BinConfig,
   binY: BinConfig,
   canvas?: HTMLCanvasElement,
-  gaussianKernel?: number[][]
+  gaussianKernel?: number[][],
+  lineWidth: number = 1,
+  tangentExtent: number = 0,
+  normalExtent: number = 0
 ) {
   const [numSeries, numDataPoints] = data.shape;
 
@@ -117,11 +120,12 @@ export default async function (
           float x = column / repeatsX + time / (maxX * repeatsX);
           
           // move up by 0.3 pixels so that the line is guaranteed to be drawn
-          float yOffset = row / repeatsY + 0.3 / ${f(reshapedHeight)};
+          // float yOffset = row / repeatsY + 0.3 / ${f(reshapedHeight)};
           // squeeze by 0.6 pixels
-          float squeeze = 1.0 - 0.6 / ${f(heatmapHeight)};
-          float yValue = value / (maxY * repeatsY) * squeeze;
-          float y = yOffset + yValue;
+          // float squeeze = 1.0 - 0.6 / ${f(heatmapHeight)};
+          // float yValue = value / (maxY * repeatsY) * squeeze;
+          // float y = yOffset + yValue;
+          float y = row / repeatsY + value / (maxY * repeatsY);
       
           // squeeze y by 0.3 pixels so that the line is guaranteed to be drawn
           float yStretch = 2.0 - 0.6 / ${f(reshapedHeight)};
@@ -456,7 +460,7 @@ export default async function (
   }
 
   // For now, assume that all time series get the same time points
-  const times = range(numDataPoints);
+  const times = rangeDup(numDataPoints);
 
   console.time("Compute heatmap");
 
@@ -488,15 +492,15 @@ export default async function (
 
         // console.log(series, Math.floor(i / 4), row);
 
-        lines[series - finishedSeries] = {
-          values: data.pick(series, null),
+        lines[(series - finishedSeries) * 2 + 1] = {
+          values: duplicate(data.pick(series, null)),
           times: times,
           maxY: binY.stop,
           maxX: numDataPoints - 1,
           column: Math.floor(i / 4),
           row: row,
           colorMask: colorMask(i),
-          count: numDataPoints,
+          count: numDataPoints * 2,
           out: linesBuffer
         };
 

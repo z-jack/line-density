@@ -106,7 +106,7 @@ export default async function (
       
         attribute float time;
         attribute float value;
-        attribute float index;
+        attribute float indexF;
       
         uniform float maxX;
         uniform float maxY;
@@ -117,11 +117,15 @@ export default async function (
         varying float innerX;
         varying float innerY;
 
+        int mod(int x, int y) {
+          return x - x / y * y;
+        }
       
         void main() {
           float repeatsX = ${f(repeatsX)};
           float repeatsY = ${f(repeatsY)};
-          innerX = float(index % 2);
+          int index = int(indexF);
+          innerX = float(mod(index, 2));
           innerY = float(index / 2 - 1);
       
           // time and value start at 0 so we can simplify the scaling
@@ -135,29 +139,41 @@ export default async function (
           // float y = yOffset + yValue;
           float baseY = row / repeatsY + value / (maxY * repeatsY);
           
-          vec2 tangent = vec2(index / 4 + 1, index / 4 + 1) - vec2(index / 4, index / 4);
+          vec2 tangent = vec2(index / 8 + 1, values[index / 8 + 1]) - vec2(index / 8, values[index / 8]);
           tangent /= vec2(maxX * repeatsX, maxY * repeatsY);
-
+          tangent = normalize(tangent);
           vec2 normal = vec2(-tangent.y, tangent.x);
+
+          vec2 onePixel = vec2(1) / vec2(maxX * repeatsX, maxY * repeatsY);
+          float pixelLength = length(onePixel);
+          tangent *= pixelLength * ${f(tangentExtent)};
+          normal *= pixelLength * ${f(normalExtent)};
+
+          vec2 position = vec2(baseX, baseY) + tangent * float(mod((index / 2 - 1), 2) * 2 - 1) - normal * float(mod(index, 2) * 2 - 1);
       
           // squeeze y by 0.3 pixels so that the line is guaranteed to be drawn
           float yStretch = 2.0 - 0.6 / ${f(reshapedHeight)};
       
           // scale to [-1, 1]
           gl_Position = vec4(
-            2.0 * (x - 0.5),
-            2.0 * (y - 0.5),
+            2.0 * (position.x - 0.5),
+            2.0 * (position.y - 0.5),
             0, 1);
         }`,
 
     frag: `
         precision mediump float;
 
-        varying vec4 uv;
+        varying float innerX;
+        varying float innerY;
       
         void main() {
           // we will control the color with the color mask
-          gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+          if (innerY < 0.0) {
+            gl_FragColor = vec4(0);
+            return;
+          }
+          gl_FragColor = vec4(1);
         }`,
 
     uniforms: {
@@ -171,7 +187,7 @@ export default async function (
     attributes: {
       time: regl.prop<any, "times">("times"),
       value: regl.prop<any, "values">("values"),
-      index: regl.prop<any, "indexes">("indexes")
+      indexF: regl.prop<any, "indexes">("indexes")
     },
 
     colorMask: regl.prop<any, "colorMask">("colorMask"),
@@ -509,7 +525,7 @@ export default async function (
 
         lines[series - finishedSeries] = {
           values: duplicate(data.pick(series, null)),
-          rawValue: data.pick(series, null),
+          rawValue: duplicate(data.pick(series, null)),
           times: times,
           indexes: range(numDataPoints * 4),
           maxY: binY.stop,

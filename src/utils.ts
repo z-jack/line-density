@@ -10,15 +10,16 @@ export function range(n: number) {
 }
 
 export function rangeDup(n: number) {
-  const out = new Float32Array(n * 2);
-  for (let i = 0; i < n * 2; i++) {
-    out[i] = Math.floor(i / 2);
+  const multi = 4;
+  const out = new Float32Array(n * multi);
+  for (let i = 0; i < n * multi; i++) {
+    out[i] = Math.floor(i / multi);
   }
   return out;
 }
 
 export function duplicate(arr: ndarray) {
-  let out = tile(arr, [1, 2])
+  let out = tile(arr, [1, 4])
   out = ndarray(out.data)
   return out
 }

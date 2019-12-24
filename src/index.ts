@@ -1,7 +1,7 @@
 import ndarray from "ndarray";
 import regl_ from "regl";
 import { MAX_REPEATS_X, MAX_REPEATS_Y } from "./constants";
-import { float as f, rangeDup, duplicate } from "./utils";
+import { float as f, rangeDup, duplicate, range } from "./utils";
 
 export interface BinConfig {
   /**
@@ -106,18 +106,26 @@ export default async function (
       
         attribute float time;
         attribute float value;
+        attribute float index;
       
         uniform float maxX;
         uniform float maxY;
         uniform float column;
         uniform float row;
+        uniform float values[${numDataPoints}];
+
+        varying float innerX;
+        varying float innerY;
+
       
         void main() {
           float repeatsX = ${f(repeatsX)};
           float repeatsY = ${f(repeatsY)};
+          innerX = float(index % 2);
+          innerY = float(index / 2 - 1);
       
           // time and value start at 0 so we can simplify the scaling
-          float x = column / repeatsX + time / (maxX * repeatsX);
+          float baseX = column / repeatsX + time / (maxX * repeatsX);
           
           // move up by 0.3 pixels so that the line is guaranteed to be drawn
           // float yOffset = row / repeatsY + 0.3 / ${f(reshapedHeight)};
@@ -125,7 +133,12 @@ export default async function (
           // float squeeze = 1.0 - 0.6 / ${f(heatmapHeight)};
           // float yValue = value / (maxY * repeatsY) * squeeze;
           // float y = yOffset + yValue;
-          float y = row / repeatsY + value / (maxY * repeatsY);
+          float baseY = row / repeatsY + value / (maxY * repeatsY);
+          
+          vec2 tangent = vec2(index / 4 + 1, index / 4 + 1) - vec2(index / 4, index / 4);
+          tangent /= vec2(maxX * repeatsX, maxY * repeatsY);
+
+          vec2 normal = vec2(-tangent.y, tangent.x);
       
           // squeeze y by 0.3 pixels so that the line is guaranteed to be drawn
           float yStretch = 2.0 - 0.6 / ${f(reshapedHeight)};
@@ -151,12 +164,14 @@ export default async function (
       maxX: regl.prop<any, "maxX">("maxX"),
       maxY: regl.prop<any, "maxY">("maxY"),
       column: regl.prop<any, "column">("column"),
-      row: regl.prop<any, "row">("row")
+      row: regl.prop<any, "row">("row"),
+      values: regl.prop<any, "rawValue">("rawValue")
     },
 
     attributes: {
       time: regl.prop<any, "times">("times"),
-      value: regl.prop<any, "values">("values")
+      value: regl.prop<any, "values">("values"),
+      index: regl.prop<any, "indexes">("indexes")
     },
 
     colorMask: regl.prop<any, "colorMask">("colorMask"),
@@ -165,8 +180,8 @@ export default async function (
 
     count: regl.prop<any, "count">("count"),
 
-    primitive: "line strip",
-    lineWidth: () => 1,
+    primitive: "triangle strip",
+    //lineWidth: () => 1,
 
     framebuffer: regl.prop<any, "out">("out")
   });
@@ -492,15 +507,17 @@ export default async function (
 
         // console.log(series, Math.floor(i / 4), row);
 
-        lines[(series - finishedSeries) * 2 + 1] = {
+        lines[series - finishedSeries] = {
           values: duplicate(data.pick(series, null)),
+          rawValue: data.pick(series, null),
           times: times,
+          indexes: range(numDataPoints * 4),
           maxY: binY.stop,
           maxX: numDataPoints - 1,
           column: Math.floor(i / 4),
           row: row,
           colorMask: colorMask(i),
-          count: numDataPoints * 2,
+          count: numDataPoints * 4,
           out: linesBuffer
         };
 

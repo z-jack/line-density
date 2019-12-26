@@ -1,7 +1,7 @@
 import ndarray from "ndarray";
 import regl_ from "regl";
 import { MAX_REPEATS_X, MAX_REPEATS_Y } from "./constants";
-import { float as f, rangeDup, duplicate, range } from "./utils";
+import { float as f, rangeDup, duplicate, range, makePair } from "./utils";
 
 export interface BinConfig {
   /**
@@ -98,62 +98,69 @@ export default async function (
   const reshapedWidth = heatmapWidth * repeatsX;
   const reshapedHeight = heatmapHeight * repeatsY;
 
-  console.info(`Canvas size ${reshapedWidth}x${reshapedHeight}.`);
+  console.info(`Canvas size ${reshapedWidth}x${reshapedHeight}. Tangent Gaussian size ${tangentExtent}. Normal Gaussian size ${normalExtent}. Line width ${lineWidth}. MaxX ${binX.stop}. MaxY ${binY.stop}`);
 
   const drawLine = regl({
     vert: `
         precision mediump float;
-      
+
         attribute float time;
         attribute float value;
         attribute float indexF;
-      
+        attribute vec2 valuePair;
+
         uniform float maxX;
         uniform float maxY;
         uniform float column;
         uniform float row;
-        uniform float values[${numDataPoints}];
 
         varying float innerX;
         varying float innerY;
+        varying float baseRow;
+        varying float baseColumn;
+        varying float tangentRatio;
 
         int mod(int x, int y) {
           return x - x / y * y;
         }
-      
+
         void main() {
           float repeatsX = ${f(repeatsX)};
           float repeatsY = ${f(repeatsY)};
           int index = int(indexF);
           innerX = float(mod(index, 2));
           innerY = float(index / 2 - 1);
-      
+          baseColumn = column;
+          baseRow = row;
+
           // time and value start at 0 so we can simplify the scaling
           float baseX = column / repeatsX + time / (maxX * repeatsX);
-          
+
           // move up by 0.3 pixels so that the line is guaranteed to be drawn
-          // float yOffset = row / repeatsY + 0.3 / ${f(reshapedHeight)};
+          float yOffset = row / repeatsY + 0.3 / ${f(reshapedHeight)};
           // squeeze by 0.6 pixels
-          // float squeeze = 1.0 - 0.6 / ${f(heatmapHeight)};
-          // float yValue = value / (maxY * repeatsY) * squeeze;
-          // float y = yOffset + yValue;
-          float baseY = row / repeatsY + value / (maxY * repeatsY);
-          
-          vec2 tangent = vec2(index / 8 + 1, values[index / 8 + 1]) - vec2(index / 8, values[index / 8]);
+          float squeeze = 1.0 - 0.6 / ${f(heatmapHeight)};
+          float yValue = value / (maxY * repeatsY) * squeeze;
+          float baseY = yOffset + yValue;
+          //float baseY = row / repeatsY + value / (maxY * repeatsY) + 0.3 / ${f(reshapedHeight)};
+
+          vec2 tangent = vec2(1.0, valuePair.y) - vec2(0.0, valuePair.x);
           tangent /= vec2(maxX * repeatsX, maxY * repeatsY);
+          float lineLength = length(tangent);
+          tangent *= vec2(${f(reshapedWidth)}, ${f(reshapedHeight)});
           tangent = normalize(tangent);
           vec2 normal = vec2(-tangent.y, tangent.x);
 
-          vec2 onePixel = vec2(1) / vec2(maxX * repeatsX, maxY * repeatsY);
-          float pixelLength = length(onePixel);
-          tangent *= pixelLength * ${f(tangentExtent)};
-          normal *= pixelLength * ${f(normalExtent)};
+          tangent /= vec2(${f(reshapedWidth)}, ${f(reshapedHeight)});
+          normal /= vec2(${f(reshapedWidth)}, ${f(reshapedHeight)});
+          tangent *= ${f(tangentExtent)};
+          normal *= ${f(normalExtent + lineWidth / 2)};
+          tangentRatio = 1.0 - length(tangent) / lineLength;
+          //tangent.y *= squeeze;
+          //normal.y *= squeeze;
 
-          vec2 position = vec2(baseX, baseY) + tangent * float(mod((index / 2 - 1), 2) * 2 - 1) - normal * float(mod(index, 2) * 2 - 1);
-      
-          // squeeze y by 0.3 pixels so that the line is guaranteed to be drawn
-          float yStretch = 2.0 - 0.6 / ${f(reshapedHeight)};
-      
+          vec2 position = vec2(baseX, baseY) + tangent * float(mod((index / 2 - 1), 2) * 2 - 1) + normal * float(mod(index, 2) * 2 - 1);
+
           // scale to [-1, 1]
           gl_Position = vec4(
             2.0 * (position.x - 0.5),
@@ -166,28 +173,53 @@ export default async function (
 
         varying float innerX;
         varying float innerY;
+        varying float baseRow;
+        varying float baseColumn;
+        varying float tangentRatio;
+
+        float modf(float x, float y) {
+          return x - floor(x / y) * y;
+        }
+
+        float sig(float pos, float ratio) {
+          if (pos < 0.0 || pos > 1.0) {
+            return 0.0;
+          }
+          float margin = (1.0 - ratio) / 2.0;
+          if (pos >= margin && pos <= margin + ratio) {
+            return 1.0;
+          }
+          float sigmoidBase;
+          if (pos < 0.5) {
+            sigmoidBase = (pos / margin) * 10.0 - 5.0;
+          } else {
+            sigmoidBase = ((1.0 - pos) / margin) * 10.0 - 5.0;
+          }
+          return 1.0 / (1.0 + exp(-sigmoidBase));
+        }
       
         void main() {
           // we will control the color with the color mask
-          if (innerY < 0.0) {
+          float normalRatio = ${f(lineWidth / (lineWidth + normalExtent * 2))};
+          if (innerY < 0.0 || modf(innerY, 2.0) > 1.0 || floor(baseColumn) != floor(gl_FragCoord.x / ${f(heatmapWidth)}) || floor(baseRow) != floor(gl_FragCoord.y / ${f(heatmapHeight)})) {
             gl_FragColor = vec4(0);
             return;
           }
-          gl_FragColor = vec4(1);
+          gl_FragColor = vec4(sig(innerX, normalRatio) * sig(innerY - floor(innerY), tangentRatio));
         }`,
 
     uniforms: {
       maxX: regl.prop<any, "maxX">("maxX"),
       maxY: regl.prop<any, "maxY">("maxY"),
       column: regl.prop<any, "column">("column"),
-      row: regl.prop<any, "row">("row"),
-      values: regl.prop<any, "rawValue">("rawValue")
+      row: regl.prop<any, "row">("row")
     },
 
     attributes: {
       time: regl.prop<any, "times">("times"),
       value: regl.prop<any, "values">("values"),
-      indexF: regl.prop<any, "indexes">("indexes")
+      indexF: regl.prop<any, "indexes">("indexes"),
+      valuePair: regl.prop<any, "rawValue">("rawValue")
     },
 
     colorMask: regl.prop<any, "colorMask">("colorMask"),
@@ -195,6 +227,22 @@ export default async function (
     depth: { enable: false, mask: false },
 
     count: regl.prop<any, "count">("count"),
+
+    // additive blending
+    blend: {
+      enable: true,
+      func: {
+        srcRGB: "one",
+        srcAlpha: 1,
+        dstRGB: "one",
+        dstAlpha: 1
+      },
+      equation: {
+        rgb: "add",
+        alpha: "add"
+      },
+      color: [0, 0, 0, 0]
+    },
 
     primitive: "triangle strip",
     //lineWidth: () => 1,
@@ -525,7 +573,7 @@ export default async function (
 
         lines[series - finishedSeries] = {
           values: duplicate(data.pick(series, null)),
-          rawValue: duplicate(data.pick(series, null)),
+          rawValue: makePair(data.pick(series, null)),
           times: times,
           indexes: range(numDataPoints * 4),
           maxY: binY.stop,
@@ -592,7 +640,7 @@ export default async function (
 
   if (debugCanvas) {
     drawTexture({
-      buffer: resultBuffer,
+      buffer: linesBuffer,
       colorMask: [true, true, true, true]
     });
   }

@@ -34,7 +34,9 @@
   "dependencies": {
     "@types/ndarray": "^1.0.7",
     "ndarray": "^1.0.18",
+    "ndarray-pack": "^1.2.1",
     "ndarray-tile": "^1.0.3",
+    "ndarray-unpack": "^1.0.0",
     "regl": "^1.3.13",
     "vega-statistics": "^1.6.1"
   }
